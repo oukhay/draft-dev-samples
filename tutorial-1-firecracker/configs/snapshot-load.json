@@ -1,0 +1,1 @@
+{"mem_backend":{"backend_path":"./snapshot/vm.mem","backend_type":"File"},"resume_vm":true,"snapshot_path":"./snapshot/vm.state"}
