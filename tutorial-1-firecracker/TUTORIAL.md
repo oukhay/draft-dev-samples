@@ -247,21 +247,25 @@ Every task gets a pristine, hardware-isolated environment in about a second, and
 
 ## Reality check: your microVM is the security boundary, and boundaries get breached
 
-This tutorial treats the Firecracker microVM as a hardware-isolated sandbox for untrusted agent code. On October 3, 2026, security researcher Paulos Yibelo demonstrated that the isolation boundary itself is not bulletproof: he reported a full KVM guest-to-host escape, code running inside a guest VM obtaining root access on the host, through Vercel's Sandbox bug bounty program. Vercel confirmed it was a KVM zero-day and paid him the program's maximum $50,000 bounty.
+This tutorial treats the Firecracker microVM as a hardware-isolated sandbox for untrusted agent code. In the fall of 2026, security researcher Paulos Yibelo showed that the isolation boundary itself is not bulletproof. Through Vercel's Sandbox bug bounty challenge, he reported a flaw that let code inside a guest VM read host memory, and in his lab, on machines matching Vercel's configuration, he took it all the way to host root. Vercel confirmed the finding and paid the program's maximum $50,000 bounty. CEO Guillermo Rauch announced it on October 3, 2026: "We've confirmed a KVM 0day through our Vercel Sandbox bounty program."
 
 Why this matters for you: Vercel Sandbox runs untrusted AI workloads, including AI agent code, inside Firecracker microVMs on bare-metal EC2 hosts, and Vercel identifies the microVM, not the container, as its primary security boundary. The exact boundary this tutorial builds on. Yibelo's finding crosses exactly that line.
 
-Important caveats before you reuse this:
+The technical shape is worth understanding, because the bug was not in KVM at all. It was in the host Linux kernel's IPv4 stack (CVE-2026-99999, CVSS 9.3). A guest can hand the host deferred-checksum metadata (CHECKSUM_PARTIAL, via virtio-net and the TAP device) that the host trusts without validating it properly. When the host completes the checksum and later fragments the packet, it copies bytes of adjacent host memory into the fragments. Repeat that and you have a reliable host-memory leak from inside the guest, and Yibelo's write-up ("PwnEscape") shows a two-packet host crash and the lab escalation to root on top of it. KVM is the boundary that got crossed, not the code that was buggy. The vulnerable code was introduced in kernel 2.6.27, so effectively every host kernel before the fix was exposed.
 
-- The exploit chain, affected KVM/kernel versions, and CVE identifier are still undisclosed. Vercel CEO Guillermo Rauch said a technical write-up is coming. No customer data theft or widespread exploitation has been established.
-- So treat this as a threat-model lesson, not a patch instruction: snapshot and restore is a deployment optimization, not a security control. Your actual containment stack is the `jailer`, cgroup limits, host egress filtering, and keeping the host kernel patched.
-- Assume breach: log and monitor the host side too, because the boundary you trust the most deserves the most suspicion.
+What to do with this:
+
+- **Patch the host.** The fix landed upstream on October 14, 2026; the first fixed stable kernels include 5.10.272, 5.15.223, 6.1.190, 6.6.159, 6.12.113 and 6.18.57, and a host reboot is required. Patching the guest does nothing for this class of bug, because the flaw lives below the guest.
+- **Treat it as a threat-model lesson, not just a patch instruction:** snapshot and restore is a deployment optimization, not a security control. Your actual containment stack is the `jailer`, cgroup limits, host egress filtering, and keeping the host kernel patched.
+- **Assume breach:** log and monitor the host side too, because the boundary you trust the most deserves the most suspicion.
+- **Calibrate the fear:** no exploitation in the wild and no customer data impact has been reported for this CVE, and the write-up publishes the mechanism but not the full root chain or exploit code.
 
 Sources:
-- https://cybersecuritynews.com/kvm-zero-day-vm-escape/
-- https://aws.amazon.com/security/security-bulletins/2026-124-aws/ (related: AWS patched its own agent-platform auth bypass the same week)
-
-<!-- TODO before publishing: confirm the technical write-up and CVE status of the Yibelo KVM zero-day (still undisclosed as of Oct 19, 2026) and update this section if they land. -->
+- https://pwn.ai/blog/pwnescape (Yibelo's write-up, part 1)
+- https://www.cve.org/CVERecord?id=CVE-2026-99999
+- https://vercel.com/blog/findings-from-the-1-million-dollar-vercel-sandbox-challenge
+- https://aws.amazon.com/security/security-bulletins/2026-137-aws/ (AWS: managed EC2, Lambda and Fargate not affected; self-managed KVM and Firecracker hosts are)
+- https://aws.amazon.com/security/security-bulletins/2026-124-aws/ (related, same week: an auth bypass and two more issues in Loom for AWS, AWS's agent orchestration platform)
 
 ## Wrapping up
 

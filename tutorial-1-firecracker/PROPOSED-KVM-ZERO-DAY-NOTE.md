@@ -1,6 +1,6 @@
 # Proposed addition: threat-model reality check (Oct 5, 2026)
 
-Status: APPROVED and inserted into TUTORIAL.md on Oct 19, 2026. Outstanding: confirm the Yibelo technical write-up and CVE status before publishing (tracked as an HTML comment in TUTORIAL.md).
+Status: APPROVED and inserted into TUTORIAL.md on Oct 19, 2026. The write-up and CVE check was completed Oct 20, 2026: Yibelo's "PwnEscape" write-up (part 1) is published at pwn.ai, the CVE is CVE-2026-99999 (host IPv4 stack, not KVM code; fixed upstream Oct 14, 2026), and the section in TUTORIAL.md was rewritten with the confirmed facts and pushed the same day. This file keeps the original Oct 5 draft below for reference; the live text is in TUTORIAL.md.
 
 ---
 
