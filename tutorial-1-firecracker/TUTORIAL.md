@@ -8,36 +8,67 @@ In this tutorial you will boot a Firecracker microVM, run an untrusted script in
 
 ## Prerequisites
 
-- A host with **KVM access**: bare metal or an EC2 bare-metal instance (for example `i3.metal`). Check with:
+- A host with **KVM access**: a physical machine with virtualization enabled in the BIOS, or an EC2 virtual instance with nested virtualization turned on (for example `c8i.xlarge` with `--cpu-options "NestedVirtualization=enabled"`; supported on the c8i, m8i and r8i families, off by default, enable at launch). Bare metal (for example `i3.metal`) still works but is only a fallback now. Check with:
 
 ```bash
 [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo "KVM OK" || echo "KVM MISSING"
 ```
 
-It will not work on a regular virtualized EC2 instance or a laptop without KVM. Nested virtualization is the reason, and there is no way around it.
+It will not work on a regular virtualized EC2 instance with nested virtualization off, or on a laptop without KVM. See `KVM-TEST-RUN.md` for the full host options and costs.
 
-- Firecracker **v1.17.0** (latest at the time of writing), `curl`, `iproute2`, `iptables`, `ssh`.
+- Firecracker **v1.17.0** (latest at the time of writing), `curl`, `wget`, `iproute2`, `iptables`, `ssh`, plus `squashfs-tools` and `e2fsprogs` (Step 1 builds the root filesystem with `unsquashfs` and `mkfs.ext4`).
 
 ## Step 1: Download Firecracker, a kernel, and a root filesystem
 
 ```bash
 ARCH=$(uname -m)
 FC_VERSION=v1.17.0
+S3="https://s3.amazonaws.com/spec.ccfc.min"
 
-# Firecracker binary
+# Firecracker binary (the binary inside the tarball carries a version suffix)
 curl -L -o firecracker.tgz \
-  https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-$(uname -m).tgz
+  https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VERSION}/firecracker-${FC_VERSION}-${ARCH}.tgz
 tar -xzf firecracker.tgz
-sudo mv release-${FC_VERSION}-$(uname -m)/firecracker /usr/local/bin/
+sudo install -m 755 release-${FC_VERSION}-${ARCH}/firecracker-${FC_VERSION}-${ARCH} \
+  /usr/local/bin/firecracker
 
-# Kernel (v1.17.0 also boots bzImage, but the classic vmlinux works everywhere)
-wget https://s3.amazonaws.com/spec.ccfc.min/img/quickstart_guide/${ARCH}/kernels/vmlinux.bin -O vmlinux
+# The kernel and root filesystem come from the Firecracker CI artifacts, the
+# same source the official getting-started guide uses. Find the latest build:
+CI_ARTIFACTS_PREFIX=$(curl -fsSL "$S3?list-type=2&prefix=firecracker-ci/&delimiter=/" \
+  | grep -oP "(?<=<Prefix>)firecracker-ci/[0-9]{8}-[^/]+/(?=</Prefix>)" | sort | tail -1)
 
-# Root filesystem: grab a ready-made Ubuntu image from the official
-# getting-started guide (firecracker-microvm/firecracker, docs/getting-started.md)
-# and its matching SSH key, then lock the key down:
-chmod 400 ./ubuntu-*.id_rsa
+# Kernel: grab the newest vmlinux-* and save it as ./vmlinux
+latest_kernel_key=$(curl -fsSL "$S3?list-type=2&prefix=${CI_ARTIFACTS_PREFIX}${ARCH}/vmlinux-" \
+  | grep -oP "(?<=<Key>)(${CI_ARTIFACTS_PREFIX}${ARCH}/vmlinux-[0-9]+\.[0-9]+\.[0-9]{1,3})(?=</Key>)" \
+  | sort -V | tail -1)
+wget "$S3/${latest_kernel_key}" -O vmlinux
+
+# Root filesystem: the CI image is a squashfs with no SSH key baked in, so
+# generate one, patch the public key into the image, and build an ext4 from it
+latest_ubuntu_key=$(curl -fsSL "$S3?list-type=2&prefix=${CI_ARTIFACTS_PREFIX}${ARCH}/ubuntu-" \
+  | grep -oP "(?<=<Key>)(${CI_ARTIFACTS_PREFIX}${ARCH}/ubuntu-[0-9]+\.[0-9]+\.squashfs)(?=</Key>)" \
+  | sort -V | tail -1)
+ubuntu_version=$(basename $latest_ubuntu_key .squashfs | grep -oE '[0-9]+\.[0-9]+')
+wget -O ubuntu-$ubuntu_version.squashfs.upstream "$S3/$latest_ubuntu_key"
+unsquashfs ubuntu-$ubuntu_version.squashfs.upstream
+ssh-keygen -f id_rsa -N ""
+mkdir -p squashfs-root/root/.ssh
+cp id_rsa.pub squashfs-root/root/.ssh/authorized_keys
+mv id_rsa ./ubuntu-$ubuntu_version.id_rsa
+sudo chown -R root:root squashfs-root
+truncate -s 1G ubuntu-$ubuntu_version.ext4
+sudo mkfs.ext4 -d squashfs-root -F ubuntu-$ubuntu_version.ext4
+chmod 400 ./ubuntu-$ubuntu_version.id_rsa
 ```
+
+Two traps this step avoids, both verified the hard way. First, the old
+quickstart kernel still floating around (`vmlinux.bin`, kernel 4.14) boots,
+but Ubuntu 24.04's systemd warns it is below its 4.15 baseline and the
+guest's sshd stalls for many minutes waiting on entropy, so every SSH step
+below looks broken. The CI kernel (6.18 in the verified run) is the matched
+pair for the CI rootfs and boots to SSH in about a minute. Second, there is
+no prebuilt `ubuntu-24.04.ext4` to download anymore; the squashfs build
+above is the current official flow.
 
 ## Step 2: Set up host networking
 
@@ -105,9 +136,9 @@ Expected output (abridged):
 ```
 == whoami / hostname ==
 root
-localhost
+ubuntu-fc-uvm
 == init process (should be the guest's, not the host's) ==
-    PID COMMAND
+    PID
       1 systemd
 == trying to see the host (should fail) ==
 ls: cannot access '/host': No such file or directory
@@ -171,6 +202,12 @@ with `snapshot-load.json`:
     "resume_vm": true
 }
 ```
+
+Measured on the c8i.xlarge test host (nested virtualization), that `time`
+came back at **0.093s** real, and Firecracker's own log put the load request
+at 4.1 ms. The restored guest answered SSH immediately, with its uptime
+continuing from the original boot, because the guest clock is part of the
+snapshot.
 
 A few things worth noticing:
 
