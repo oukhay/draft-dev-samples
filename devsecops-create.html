@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Create the devsecops-agents GitHub App</title>
+</head>
+<body>
+<h1>Create the devsecops-agents GitHub App</h1>
+<p>Open this file from a local checkout, then click the button below to create the app under oukhay.</p>
+<form action="https://github.com/settings/apps/new" method="post">
+<input type="hidden" name="manifest" value='{"name":"devsecops-agents-bot","url":"https://github.com/sopiconsulting/devsecops-agents","redirect_url":"https://github.com/sopiconsulting/devsecops-agents","public":false,"hook_attributes":{"url":"https://example.invalid/webhook","active":false},"default_permissions":{"contents":"write","pull_requests":"write","issues":"write","checks":"read","statuses":"read","actions":"read","metadata":"read"},"default_events":[]}'>
+<button type="submit">Create GitHub App</button>
+</form>
+</body>
+</html>
